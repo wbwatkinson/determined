@@ -20,3 +20,5 @@ searcher:
 min_validation_period:
   epochs: 1
 entrypoint: model_def:CIFARTrial
+environment:
+  image: mackrorysd/tensorflow:perf2

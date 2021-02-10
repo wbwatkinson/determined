@@ -22,3 +22,5 @@ searcher:
 min_validation_period:
   batches: 1000
 entrypoint: model_def:MnistTrial
+environment:
+  image: mackrorysd/tensorflow:perf2
