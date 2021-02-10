@@ -12,4 +12,4 @@ searcher:
     batches: 2000
 entrypoint: model_def:MNistTrial
 environment:
-  image: mackrorysd/tensorflow:perf2
+  image: determinedai/environments:cuda-11.0-pytorch-1.7-tf-2.4-gpu-0.9.0
