@@ -2,6 +2,7 @@ package kubernetes
 
 import (
 	"fmt"
+	"math"
 	"path"
 	"strconv"
 	"strings"
@@ -168,6 +169,32 @@ func (p *pod) configureVolumes(
 	return initContainerVolumeMounts, volumeMounts, volumes
 }
 
+func (p *pod) modifyPodSpec(newPod *k8sV1.Pod, config model.ExperimentConfig, scheduler string, isGC bool) {
+	minAvailable := 1
+	if !isGC {
+		minAvailable = int(math.Ceil(float64(config.Resources.SlotsPerTrial) / float64(p.gpus)))
+	}
+
+	newName := ""
+	for i, v := range strings.Split(p.podName, "-") {
+		if i > 3 {
+			break
+		}
+		newName += v
+	}
+	if isGC {
+		newName += "GC"
+	}
+
+	newPod.APIVersion = "v1"
+	newPod.Kind = "Pod"
+	newPod.Labels = map[string]string{
+		"pod-group.scheduling.sigs.k8s.io/name":          newName,
+		"pod-group.scheduling.sigs.k8s.io/min-available": strconv.Itoa(minAvailable),
+	}
+	newPod.Spec.SchedulerName = scheduler
+}
+
 func (p *pod) configurePodSpec(
 	ctx *actor.Context,
 	volumes []k8sV1.Volume,
@@ -175,11 +202,21 @@ func (p *pod) configurePodSpec(
 	determinedContainer k8sV1.Container,
 	sidecarContainers []k8sV1.Container,
 	podSpec *k8sV1.Pod,
+	scheduler string,
+	isGC bool,
 ) *k8sV1.Pod {
 	if podSpec == nil {
 		podSpec = &k8sV1.Pod{}
 	} else {
 		podSpec = podSpec.DeepCopy()
+	}
+
+	if scheduler == "coscheduler" {
+		if isGC {
+			p.modifyPodSpec(podSpec, p.taskSpec.GCCheckpoints.ExperimentConfig, scheduler, isGC)
+		} else {
+			p.modifyPodSpec(podSpec, p.taskSpec.StartContainer.ExperimentConfig, scheduler, isGC)
+		}
 	}
 
 	podSpec.ObjectMeta.Name = p.podName
@@ -226,7 +263,7 @@ func (p *pod) configurePodSpec(
 	return podSpec
 }
 
-func (p *pod) createPodSpecForTrial(ctx *actor.Context) error {
+func (p *pod) createPodSpecForTrial(ctx *actor.Context, customScheduler string) error {
 	p.containerNames[model.DeterminedK8FluentContainerName] = true
 
 	exp := *p.taskSpec.StartContainer
@@ -343,6 +380,8 @@ func (p *pod) createPodSpecForTrial(ctx *actor.Context) error {
 		mainContainer,
 		[]k8sV1.Container{fluentContainer},
 		exp.ExperimentConfig.Environment.PodSpec,
+		customScheduler,
+		false,
 	)
 
 	p.configMap, err = p.configureConfigMapSpec(runArchives, fluentFiles)
@@ -398,7 +437,7 @@ func (p *pod) createPodSpecForCommand(ctx *actor.Context) error {
 	}
 
 	p.pod = p.configurePodSpec(
-		ctx, volumes, initContainer, container, nil, cmd.Config.Environment.PodSpec)
+		ctx, volumes, initContainer, container, nil, cmd.Config.Environment.PodSpec, "default", false)
 
 	p.configMap, err = p.configureConfigMapSpec(runArchives, nil)
 	if err != nil {
@@ -408,7 +447,7 @@ func (p *pod) createPodSpecForCommand(ctx *actor.Context) error {
 	return nil
 }
 
-func (p *pod) createPodSpecForGC(ctx *actor.Context) error {
+func (p *pod) createPodSpecForGC(ctx *actor.Context, customScheduler string) error {
 	gcc := *p.taskSpec.GCCheckpoints
 
 	deviceType := device.CPU
@@ -449,7 +488,7 @@ func (p *pod) createPodSpecForGC(ctx *actor.Context) error {
 	}
 
 	p.pod = p.configurePodSpec(
-		ctx, volumes, initContainer, container, nil, gcc.ExperimentConfig.Environment.PodSpec)
+		ctx, volumes, initContainer, container, nil, gcc.ExperimentConfig.Environment.PodSpec, customScheduler, true)
 
 	p.configMap, err = p.configureConfigMapSpec(runArchives, nil)
 	if err != nil {
