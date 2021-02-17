@@ -94,7 +94,7 @@ def _make_test_workloads(
     yield from interceptor.send(workload.train_workload(1), [])
     metrics = interceptor.metrics_result()
     batch_metrics = metrics["metrics"]["batch_metrics"]
-    check.eq(len(batch_metrics), config.scheduling_unit())
+    check.eq(len(batch_metrics), 1)
     logging.info(f"Finished training, metrics: {batch_metrics}")
 
     logging.info("Validating one batch")
@@ -109,6 +109,10 @@ def _make_test_workloads(
 
     yield workload.terminate_workload(), [], workload.ignore_workload_response
     logging.info("The test experiment passed.")
+
+
+def _make_inference_workloads() -> workload.Stream:
+    yield workload.terminate_workload(), [], workload.ignore_workload_response
 
 
 def _stop_loading_implementation() -> None:
@@ -182,7 +186,13 @@ def _load_trial_on_local(
         env, rendezvous_info, hvd_config = det._make_local_execution_env(
             managed_training=managed_training, test_mode=False, config=config, hparams=hparams
         )
-        trial_context = trial_class.trial_context_class(env, hvd_config)
+        trial_context = trial_class.trial_context_class(
+            env=env,
+            workloads=_make_inference_workloads(),
+            load_path=None,
+            rendezvous_info=rendezvous_info,
+            hvd_config=hvd_config,
+        )
     return trial_class, trial_context
 
 
@@ -398,5 +408,11 @@ def create_trial_instance(
     env, rendezvous_info, hvd_config = det._make_local_execution_env(
         managed_training=False, test_mode=False, config=config, hparams=hparams
     )
-    trial_context = trial_def.trial_context_class(env, hvd_config)
+    trial_context = trial_def.trial_context_class(
+        env=env,
+        workloads=_make_inference_workloads(),
+        load_path=pathlib.Path(checkpoint_dir),
+        rendezvous_info=rendezvous_info,
+        hvd_config=hvd_config,
+    )
     return trial_def(trial_context)

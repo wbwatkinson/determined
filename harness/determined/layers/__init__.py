@@ -9,3 +9,4 @@ from determined.layers._workload_manager import (
     WorkloadManager,
     build_workload_manager,
 )
+from determined.layers._workload_callback_helper import WorkloadCallbackHelper

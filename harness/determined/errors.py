@@ -16,6 +16,11 @@ class InvalidExperimentException(BaseException):
     """
     InvalidExperimentException is used if an experiment is invalid.
     """
+    def __init__(self, message: str) -> None:
+        super().__init__(
+            f"Invalid experiment definition: {message}. "
+            "Please fix the experiment definition accordingly."
+        )
 
 
 class InvalidDataTypeException(InvalidExperimentException):
@@ -34,6 +39,24 @@ class InvalidConfigurationException(InvalidExperimentException):
 
     def __init__(self, config: Dict[str, Any], message: str) -> None:
         super().__init__(f"Invalid configuration ({config}): {message}.")
+
+
+class InvalidTrialException(InvalidExperimentException):
+    """
+    InvalidTrialException is used if the trial class of an experiment is invalid.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(f"Invalid trial class: {message}.")
+
+
+class InvalidMetricsTypeException(InvalidExperimentException):
+    """
+    InvalidMetricsTypeException is used if the metrics type of an experiment is invalid.
+    """
+
+    def __init__(self, type: Type, message: str) -> None:
+        super().__init__(f"Invalid metrics type ({type.__name__}): {message}.")
 
 
 class InvalidCheckpointException(Exception):

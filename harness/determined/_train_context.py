@@ -1,9 +1,11 @@
 import abc
 import logging
+import pathlib
 from typing import Any, Callable, Dict, Optional, cast
 
 import determined as det
-from determined import horovod
+from determined import horovod, workload
+from determined.horovod import hvd
 
 
 class _TrainContext(metaclass=abc.ABCMeta):
@@ -152,8 +154,27 @@ class TrialContext(_TrainContext):
     The context passed to the User's ``Trial.__init__()`` will inherit from this class.
     """
 
-    def __init__(self, env: det.EnvContext, hvd_config: horovod.HorovodContext):
+    def __init__(
+        self,
+        env: det.EnvContext,
+        workloads: workload.Stream,
+        load_path: Optional[pathlib.Path],
+        rendezvous_info: det.RendezvousInfo,
+        hvd_config: horovod.HorovodContext,
+    ):
         super().__init__(env, hvd_config)
+
+        self.workloads = workloads
+        self.load_path = load_path
+        self.rendezvous_info = rendezvous_info
+
+        if self.hvd_config.use:
+            self.is_chief = hvd.rank() == 0
+        else:
+            self.is_chief = True
+
+        self.cur_total_batch_idx = -1
+        self.cur_epoch_idx = -1
 
 
 class NativeContext(_TrainContext):
@@ -163,7 +184,11 @@ class NativeContext(_TrainContext):
     The context returned by the ``init()`` function will inherit from this class.
     """
 
-    def __init__(self, env: det.EnvContext, hvd_config: horovod.HorovodContext):
+    def __init__(
+        self,
+        env: det.EnvContext,
+        hvd_config: horovod.HorovodContext,
+    ):
         super().__init__(env, hvd_config)
         self._train_fn = None  # type: Optional[Callable[[], None]]
 

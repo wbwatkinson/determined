@@ -95,7 +95,7 @@ class MetricMaker(det.CallbackTrialController):
         self.value += self.gain_per_batch * num_batches
 
         return {
-            "metrics": det.util.make_metrics(num_batches, batch_metrics),
+            "metrics": det.util.make_step_metrics(num_batches, batch_metrics),
             "stop_requested": self.context.get_stop_requested(),
         }
 

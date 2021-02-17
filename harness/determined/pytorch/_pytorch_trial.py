@@ -315,7 +315,7 @@ class PyTorchTrialController(det.LoopTrialController):
             per_batch_metrics = self._average_training_metrics(per_batch_metrics)
         if self.hvd_config.use:
             num_inputs *= hvd.size()
-        metrics = det.util.make_metrics(num_inputs, per_batch_metrics)
+        metrics = det.util.make_step_metrics(num_inputs, per_batch_metrics)
 
         # Ignore batch_metrics entirely for custom reducers; there's no guarantee that per-batch
         # metrics are even logical for a custom reducer.

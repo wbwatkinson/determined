@@ -97,7 +97,7 @@ class NoOpTrialController(det.CallbackTrialController):
         self.trained_steps[step_id] += 1
         metrics = {name: self.current_metric() for name in ["loss", *self.training_metrics()]}
         response = {
-            "metrics": det.util.make_metrics(
+            "metrics": det.util.make_step_metrics(
                 self._batch_size * num_batches, [metrics] * num_batches
             ),
             "stop_requested": self.context.get_stop_requested(),

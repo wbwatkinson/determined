@@ -147,7 +147,9 @@ class DeterminedControlHook(estimator.RunHook):
         self.train_response_func = cast(workload.ResponseFunc, self.train_response_func)
         if self.estimator_trial_controller.is_chief:
             response = {
-                "metrics": det.util.make_metrics(self.batches_processed_in_step, self.step_metrics),
+                "metrics": det.util.make_step_metrics(
+                    self.batches_processed_in_step, self.step_metrics
+                ),
                 "stop_requested": self.estimator_trial_controller.context.get_stop_requested(),
                 "invalid_hp": False,
             }

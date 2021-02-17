@@ -70,7 +70,7 @@ class NoopTrialController(det.TrialController):
     def run(self) -> None:
         for w, args, response_func in self.workloads:
             if w.kind == workload.Workload.Kind.RUN_STEP:
-                metrics = det.util.make_metrics(
+                metrics = det.util.make_step_metrics(
                     num_inputs=None,
                     batch_metrics=[{"loss": 1} for _ in range(w.num_batches)],
                 )

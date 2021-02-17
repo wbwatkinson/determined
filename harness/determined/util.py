@@ -74,7 +74,7 @@ def _dict_to_list(dict_of_lists: Dict[str, List]) -> List[Dict[str, Any]]:
     return output_list
 
 
-def validate_batch_metrics(batch_metrics: List[Dict[str, Any]]) -> None:
+def check_step_metrics(batch_metrics: List[Dict[str, Any]]) -> None:
     metric_dict = _list_to_dict(batch_metrics)
 
     # We expect that all batches have the same set of metrics.
@@ -87,11 +87,19 @@ def validate_batch_metrics(batch_metrics: List[Dict[str, Any]]) -> None:
         check.eq(metric_dict_keys, keys, "inconsistent training metrics: index: {}".format(idx))
 
 
-def make_metrics(num_inputs: Optional[int], batch_metrics: List[Dict[str, Any]]) -> Dict[str, Any]:
+def check_val_metrics(metrics: Dict[str, Any]) -> None:
+    check.is_in(
+        "validation_metrics", metrics, "validation metrics must have validation_metrics field."
+    )
+
+
+def make_step_metrics(
+    num_inputs: Optional[int], batch_metrics: List[Dict[str, Any]]
+) -> Dict[str, Any]:
     """Make metrics dict including aggregates given individual data points."""
 
     metric_dict = _list_to_dict(batch_metrics)
-    validate_batch_metrics(batch_metrics)
+    check_step_metrics(batch_metrics)
 
     avg_metrics = {}  # type: Dict[str, Optional[float]]
     for name, values in metric_dict.items():
