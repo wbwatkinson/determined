@@ -1475,7 +1475,7 @@ jobs:
         default: 1
       gpu-type:
         type: string
-        default: "nvidia-tesla-a100"
+        default: "nvidia-tesla-v100"
       gpus-per-machine:
         type: integer
         default: 1
