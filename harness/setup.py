@@ -1,3 +1,4 @@
+import fastentrypoints
 from setuptools import find_packages, setup
 
 setup(
@@ -70,6 +71,8 @@ setup(
     entry_points={
         "console_scripts": [
             "det = determined.cli.__main__:main",
+            "det2 = determined.cli.cli:main",
+            "det_test = determined.test_cli.cli:main",
             "det-deploy = determined.deploy.__main__:main",
         ]
     },

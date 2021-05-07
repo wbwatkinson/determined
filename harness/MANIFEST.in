@@ -1,4 +1,5 @@
 include determined/deploy/aws/templates/*.yaml
 include determined/deploy/aws/vcpu_mapping.yaml
 include determined/deploy/local/*.yaml
+include fastentrypoints.py
 recursive-include determined/deploy/gcp/terraform *
