@@ -298,8 +298,10 @@ func NewTrial(
 // Step represents a row from the `steps` table.
 type Step struct {
 	TrialID      int        `db:"trial_id"`
+	TrialRunID   int        `db:"trial_run_id"`
 	ID           int        `db:"id"`
 	TotalBatches int        `db:"total_batches"`
+	TotalInputs  int        `db:"total_inputs"`
 	State        State      `db:"state"`
 	StartTime    time.Time  `db:"start_time"`
 	EndTime      *time.Time `db:"end_time"`
@@ -338,7 +340,9 @@ func (s *Step) IsNew() bool {
 type Validation struct {
 	ID           int        `db:"id" json:"id"`
 	TrialID      int        `db:"trial_id" json:"trial_id"`
-	TotalBatches int        `db:"total_batches" json:"total_batches"`
+	TrialRunID   int        `db:"trial_run_id" json:"-"`
+	TotalBatches int        `db:"total_batches" json:"-"`
+	TotalInputs  int        `db:"total_inputs" json:"-"`
 	State        State      `db:"state" json:"state"`
 	StartTime    time.Time  `db:"start_time" json:"start_time"`
 	EndTime      *time.Time `db:"end_time" json:"end_time"`
@@ -364,7 +368,9 @@ func (v *Validation) IsNew() bool {
 type Checkpoint struct {
 	ID                int        `db:"id" json:"id"`
 	TrialID           int        `db:"trial_id" json:"trial_id"`
+	TrialRunID        int        `db:"trial_run_id" json:"-"`
 	TotalBatches      int        `db:"total_batches" json:"total_batches"`
+	TotalInputs       int        `db:"total_inputs" json:"_"`
 	State             State      `db:"state" json:"state"`
 	StartTime         time.Time  `db:"start_time" json:"start_time"`
 	EndTime           *time.Time `db:"end_time" json:"end_time"`
