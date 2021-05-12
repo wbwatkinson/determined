@@ -750,6 +750,62 @@ commands:
 
 
 jobs:
+  build-helm:
+    docker:
+      - image: determinedai/cimg-base:stable
+    steps:
+      - checkout
+      - helm/install-helm-client
+      - attach_workspace:
+          at: .
+      - run: make -C helm build
+      - persist_to_workspace:
+          root: .
+          paths:
+            - helm/build
+      - store_artifacts:
+          path: helm/build
+
+  build-docs:
+    docker:
+      - image: determinedai/cimg-base:stable
+    steps:
+      - checkout
+      - helm/install-helm-client
+      - setup-python-venv:
+          determined: true
+          extras-requires: "tensorflow==2.4.1 torch==1.8"
+          model-hub: true
+          extra-requirements-file: "docs/requirements.txt"
+          executor: determinedai/cimg-base:stable
+      - run: make -C examples build
+      - run: make -C helm build
+      - attach_workspace:
+          at: .
+      - run: make -C docs build
+      - persist_to_workspace:
+          root: .
+          paths:
+            - examples/build
+            - cli/dist
+            - common/dist
+            - harness/dist
+            - model_hub/dist
+            - docs/site/html
+      - store_artifacts:
+          path: docs/site/html
+
+  publish-docs:
+    docker:
+      - image: hashicorp/terraform:light
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - run: apk add make curl python3 py3-pip
+      - run: pip3 install awscli
+      - run: make -C docs publish
+
   package-and-push-system-local:
     docker:
       - image: cimg/go:1.16
@@ -836,6 +892,57 @@ jobs:
       - run: make -C model_hub build-docker
       - run: make -C model_hub publish-docker
 
+  package-and-push-system-release:
+    docker:
+      - image: cimg/go:1.16
+        environment:
+          GO111MODULE: "on"
+    resource_class: medium+
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - setup_remote_docker:
+          version: 19.03.12
+      - login-docker:
+          username: ${DOCKER_USER}
+          password: ${DOCKER_PASS}
+      - login-docker:
+          repository: nvcr.io
+          username: ${NGC_API_USERNAME}
+          password: ${NGC_API_KEY}
+      - pre-package-and-push-system
+      - run: make -C master release
+      - run: make -C agent release
+      - run: make -C model_hub build-docker
+      - run: make -C model_hub publish-docker
+
+  publish-helm:
+    docker:
+      - image: determinedai/cimg-base:stable
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - helm/install-helm-client
+      - run: helm plugin install https://github.com/chartmuseum/helm-push.git
+      - login-helm
+      - run: make -C helm release
+
+  publish-python-package:
+    parameters:
+      path:
+        type: string
+    docker:
+      - image: determinedai/cimg-base:stable
+    steps:
+      - checkout
+      - setup-python-venv:
+          extras-requires: "twine"
+          executor: determinedai/cimg-base:stable
+      - run: make -C <<parameters.path>> build
+      - run: make -C <<parameters.path>> publish
+
   build-bindings:
     docker:
       - image: cimg/openjdk:14.0.1
@@ -849,6 +956,34 @@ jobs:
           root: .
           paths:
             - bindings
+
+  upload-try-now-template:
+    docker:
+      - image: determinedai/cimg-base:stable
+    steps:
+      - checkout
+      - setup-python-venv:
+          extras-requires: "awscli"
+          executor: determinedai/cimg-base:stable
+      - run: make -C harness upload-try-now-template
+
+  test-debian-packaging:
+    machine:
+      image: ubuntu-2004:202101-01
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - run: sudo apt-get install -y $(pwd)/master/dist/determined-master*.deb
+      - run: sudo apt-get install -y $(pwd)/agent/dist/determined-agent*.deb
+      - run: sudo cp .circleci/packaging/master.yaml /etc/determined/master.yaml
+      - run: sudo cp .circleci/packaging/agent.yaml /etc/determined/agent.yaml
+      - run: make -C tools start-db
+      - run: python3 .circleci/scripts/wait_for_server.py localhost 5432
+      - run: sudo systemctl restart determined-master
+      - run: python3 .circleci/scripts/wait_for_server.py localhost 8080
+      - run: sudo systemctl restart determined-agent
+      - run: ./.circleci/scripts/sanity.sh
 
   test-e2e-webui:
     machine:
@@ -875,6 +1010,36 @@ jobs:
       - store_artifacts:
           path: webui/tests/reports/
 
+  lint-react:
+    docker:
+      - image: cimg/node:12.16
+    steps:
+      - checkout
+      - react-get-deps
+      - run: make -C webui/react check
+
+  lint-webui-tests:
+    docker:
+      - image: cimg/node:12.16
+    steps:
+      - checkout
+      - run: make -C webui/tests get-deps
+      - run: make -C webui/tests check
+
+  build-react-preview:
+    docker:
+      - image: cimg/node:12.16
+    environment:
+      PUBLIC_URL: /0
+      SERVER_ADDRESS: https://detai.ml/fixed
+    steps:
+      - checkout
+      - react-get-deps
+      - run: make -C webui/react build
+      - store_artifacts:
+          path: webui/react/build
+          destination: /
+
   build-react:
     parameters:
       dev-mode:
@@ -896,6 +1061,37 @@ jobs:
           paths:
             - webui/react/build
 
+  test-unit-react:
+    docker:
+      - image: cimg/node:12.16
+    steps:
+      - checkout
+      - react-get-deps
+      - run: make -C webui/react test
+
+  build-storybook:
+    docker:
+      - image: cimg/node:12.16
+    steps:
+      - checkout
+      - react-get-deps
+      - run: make -C webui/react build-storybook
+      - store_artifacts:
+          path: webui/react/build-storybook
+
+  lint-go:
+    docker:
+      - image: cimg/go:1.16
+        environment:
+          GO111MODULE: "on"
+    steps:
+      - checkout
+      - go-get-deps
+      - run: sudo apt-get update && sudo apt-get install -y clang-format
+      - run: make -C proto build
+      - run: make -C proto check
+      - run: make -C master check
+      - run: make -C agent check
 
   build-go:
     docker:
@@ -927,24 +1123,977 @@ jobs:
           root: .
           paths:
             - "proto/build/**/*"
-  
+
+  test-unit-go:
+    docker:
+      - image: cimg/go:1.16
+        environment:
+          GO111MODULE: "on"
+    steps:
+      - checkout
+      - go-get-deps
+      - run: make -C proto build
+      - run: make -C master test
+      - run: make -C agent test
+
+  test-intg-master:
+    machine:
+      image: ubuntu-2004:202101-01
+    resource_class: large
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - setup-go-intg-deps
+      - run: make -C master test-intg
+
+  test-intg-agent:
+    machine:
+      image: ubuntu-2004:202101-01
+    resource_class: large
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - setup-go-intg-deps
+      - run: make -C agent test-intg
+
+  lint-docs:
+    docker:
+      - image: determinedai/cimg-base:stable
+    steps:
+      - checkout
+      - setup-python-venv:
+          extra-requirements-file: "docs/requirements.txt"
+          executor: determinedai/cimg-base:stable
+      - run: make -C docs check
+
+  lint-python:
+    docker:
+      - image: determinedai/cimg-base:stable
+    steps:
+      - checkout
+      - setup-python-venv:
+          determined: true
+          extras-requires: "torch==1.7.1"
+          model-hub: true
+          extra-requirements-file: "requirements.txt"
+          executor: determinedai/cimg-base:stable
+      - run: make -C cli check
+      - run: make -C common check
+      - run: make -C harness check
+      - run: make -C deploy check
+      - run: make -C model_hub check
+      - run: make -C e2e_tests check
+      - run: make -C examples check
+      - run: make -C tools check
+      - run: make -C schemas check
+
+  test-unit-harness:
+    docker:
+      - image: determinedai/cimg-base:stable
+    steps:
+      - checkout
+      - setup-python-venv:
+          determined: true
+          extras-requires: "tensorflow==2.4.1 torch==1.7.1 torchvision==0.8.2"
+          extra-requirements-file: "harness/tests/requirements.txt"
+          executor: determinedai/cimg-base:stable
+      - run: make -C harness test
+
+  test-unit-harness-tf2:
+    docker:
+      - image: determinedai/cimg-base:stable
+    steps:
+      - checkout
+      - setup-python-venv:
+          determined: true
+          extras-requires: "tensorflow==2.4.1"
+          extra-requirements-file: "harness/tests/requirements.txt"
+          executor: determinedai/cimg-base:stable
+      - run: make -C harness test-tf2
+
+  test-unit-model-hub:
+    docker:
+      - image: determinedai/cimg-base:stable
+    steps:
+      - checkout
+      - setup-python-venv:
+          determined: true
+          model-hub: true
+          extras-requires: "tensorflow==2.4.1 torch==1.7.1 torchvision==0.8.2"
+          extra-requirements-file: "model_hub/tests/requirements.txt"
+          executor: determinedai/cimg-base:stable
+      - run: make -C model_hub test
+
+  test-examples:
+    docker:
+      - image: determinedai/cimg-base:stable
+    steps:
+      - checkout
+      - setup-python-venv:
+          determined: true
+          extra-requirements-file: "examples/tests/requirements.txt"
+          executor: determinedai/cimg-base:stable
+      - run: make -C examples test
+
+  test-cli:
+    parameters:
+      executor-name:
+        type: string
+    executor: << parameters.executor-name >>
+    steps:
+      - checkout
+      - run: python --version
+      - run: pip --version
+      - run: pip install wheel
+      - run: cd harness; python setup.py bdist_wheel -d ../build
+      # Windows needs special treatment of cryptography for unknown reasons.
+      # LMDB also has special requirements that only apply to windows (patch-ng).
+      - run: sh -c "if which conda ; then conda install cryptography patch-ng --yes ; fi"
+      - run: pip install --find-links build determined==<< pipeline.parameters.det-version >>
+      - run: pip freeze
+      # Allow this to fail, but it is useful for debugging.
+      - run: sh -c "pip check || true"
+      # Ensure Determined cli can run without installing cli test requirements
+      - run: det --help
+      - run: pip install setuptools_scm
+      - run: pip install -r harness/tests/requirements.txt
+      - run: pip freeze
+      - run: sh -c "pip check || true"
+      - run: pytest harness/tests/cli
+
+  test-e2e:
+    parameters:
+      tf1:
+        type: boolean
+        default: false
+      tf2:
+        type: boolean
+        default: false
+      mark:
+        type: string
+      parallelism:
+        type: integer
+    machine:
+      image: ubuntu-2004:202101-01
+    resource_class: large
+    parallelism: <<parameters.parallelism>>
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+
+      - setup-python-venv:
+          determined: true
+          extra-requirements-file: "e2e_tests/tests/requirements.txt"
+          executor: ubuntu-2004:202101-01
+
+      - run:
+          name: Get master dependencies
+          command: make -C master get-deps
+      - run:
+          name: Start database
+          command: make -C tools start-db
+      - run:
+          name: Start cluster
+          command: make -C tools run
+          background: true
+
+      - pull-task-images:
+          tf1: <<parameters.tf1>>
+          tf2: <<parameters.tf2>>
+
+      - run-e2e-tests:
+          mark: <<parameters.mark>>
+          master-host: localhost
+
+      - store_test_results:
+          path: /tmp/test-results/
+
+  deploy:
+    parameters:
+      gpu-agent-instance-type:
+        type: string
+        default: "p2.xlarge"
+      cpu-agent-instance-type:
+        type: string
+        default: "m5.large"
+
+      max-dynamic-agents:
+        type: integer
+        default: 1
+      enable-cors:
+        type: boolean
+        default: false
+    docker:
+      - image: determinedai/cimg-base:stable
+    steps:
+      - queue/until_front_of_line:
+          only-on-branch: master
+          # Basically wait forever -- we would prefer not to fail deploys and
+          # we'll likely never be this backed up.
+          time: '10000'
+      - checkout
+      - set-slack-user-id
+      - setup-python-venv:
+          determined: true
+          executor: determinedai/cimg-base:stable
+      - deploy-aws-cluster:
+          cluster-id: determined-${CIRCLE_BRANCH////--}
+          det-version: ${CIRCLE_SHA1}
+          gpu-agent-instance-type: <<parameters.gpu-agent-instance-type>>
+          cpu-agent-instance-type: <<parameters.cpu-agent-instance-type>>
+          max-dynamic-agents: <<parameters.max-dynamic-agents>>
+          enable-cors: <<parameters.enable-cors>>
+      - slack/status:
+          fail_only: true
+          failure_message: ':thisisfine: A \`${CIRCLE_JOB}\` job on branch \`${CIRCLE_BRANCH}\` has failed! Author Email: \`${AUTHOR_EMAIL}\`'
+          mentions: "${SLACK_USER_ID}"
+
+  test-e2e-aws:
+    parameters:
+      cluster-id-prefix:
+        type: string
+      mark:
+        type: string
+      gpu-agent-instance-type:
+        type: string
+        default: p2.xlarge
+      cpu-agent-instance-type:
+        type: string
+        default: m5.large
+      max-dynamic-agents:
+        type: integer
+        default: 1
+      parallelism:
+        type: integer
+        default: 1
+      enable-tls:
+        type: boolean
+        default: false
+      slack-mentions:
+        type: string
+        default: ""
+      slack-channel:
+        type: string
+        default: ""
+    docker:
+      - image: determinedai/cimg-base:stable
+    parallelism: <<parameters.parallelism>>
+    steps:
+      - checkout
+      - set-slack-user-id
+      - setup-python-venv:
+          determined: true
+          extra-requirements-file: "e2e_tests/tests/requirements.txt"
+          executor: determinedai/cimg-base:stable
+      - when:
+          condition: <<parameters.enable-tls>>
+          steps:
+            - generate-tls-cert
+      - setup-aws-cluster:
+          cluster-id: <<parameters.cluster-id-prefix>>-$(git rev-parse --short HEAD)-${CIRCLE_BUILD_NUM}-${CIRCLE_NODE_INDEX}
+          det-version: ${CIRCLE_SHA1}
+          cpu-agent-instance-type: <<parameters.cpu-agent-instance-type>>
+          gpu-agent-instance-type: <<parameters.gpu-agent-instance-type>>
+          max-dynamic-agents: <<parameters.max-dynamic-agents>>
+          master-tls-cert: ${MASTER_TLS_CERT}
+          master-tls-key: ${MASTER_TLS_KEY}
+          master-cert-name: ${MASTER_CERT_NAME}
+      - run-e2e-tests:
+          mark: <<parameters.mark>>
+          master-host: ${MASTER_HOST}
+          master-scheme: ${MASTER_SCHEME:-http}
+          master-port: ${MASTER_PORT:-8080}
+          master-cert: ${MASTER_TLS_CERT}
+          master-cert-name: ${MASTER_CERT_NAME}
+      - locate-cloudwatch-logs:
+          cluster-id: ${CLUSTER_ID}
+      - terminate-aws-cluster:
+          cluster-id: ${CLUSTER_ID}
+      - store_test_results:
+          path: /tmp/test-results/
+      - slack/status:
+          fail_only: True
+          only_for_branches: master
+          failure_message: ':thisisfine: A \`<<parameters.mark>>\` E2E GPU job on branch \`${CIRCLE_BRANCH}\` has failed! Author Email: \`${AUTHOR_EMAIL}\`'
+          mentions: <<parameters.slack-mentions>>
+          channel: <<parameters.slack-channel>>
+
+  test-e2e-gke:
+    parameters:
+      cluster-id-prefix:
+        type: string
+      mark:
+        type: string
+      parallelism:
+        type: integer
+        default: 1
+      gke-version:
+        type: string
+        default: "1.18.15-gke.1501"
+      machine-type:
+        type: string
+        default: "n1-standard-8"
+      num-machines:
+        type: integer
+        default: 1
+      gpu-type:
+        type: string
+        default: "nvidia-tesla-k80"
+      gpus-per-machine:
+        type: integer
+        default: 1
+      region:
+        type: string
+        default: "us-west1"
+      node-locations:
+        type: string
+        default: "us-west1-b"
+      slack-mentions:
+        type: string
+        default: ""
+      slack-channel:
+        type: string
+        default: ""
+    docker:
+      - image: determinedai/cimg-base:stable
+    parallelism: <<parameters.parallelism>>
+    steps:
+      - checkout
+      - set-slack-user-id
+      - setup-python-venv:
+          determined: true
+          extra-requirements-file: "e2e_tests/tests/requirements.txt"
+          executor: determinedai/cimg-base:stable
+      - setup-gke-cluster:
+          cluster-id: <<parameters.cluster-id-prefix>>-$(git rev-parse --short HEAD)-${CIRCLE_BUILD_NUM}-${CIRCLE_NODE_INDEX}
+          det-version: ${CIRCLE_SHA1}
+          gke-version: <<parameters.gke-version>>
+          machine-type: <<parameters.machine-type>>
+          num-machines: <<parameters.num-machines>>
+          gpu-type: <<parameters.gpu-type>>
+          gpus-per-machine: <<parameters.gpus-per-machine>>
+          region: <<parameters.region>>
+          node-locations: <<parameters.node-locations>>
+      - set-google-application-credentials
+      - run-e2e-tests:
+          mark: <<parameters.mark>>
+          master-host: ${MASTER_HOST}
+      - terminate-gke-cluster:
+          cluster-id: ${CLUSTER_ID}
+          region: <<parameters.region>>
+      - slack/status:
+          fail_only: True
+          only_for_branches: master
+          failure_message: ':thisisfine: A \`<<parameters.mark>>\` E2E GKE GPU job on branch \`${CIRCLE_BRANCH}\` has failed! Author Email: \`${AUTHOR_EMAIL}\`'
+          mentions: <<parameters.slack-mentions>>
+          channel: <<parameters.slack-channel>>
+
+  test-e2e-gke-cuda-11:
+    parameters:
+      cluster-id-prefix:
+        type: string
+      mark:
+        type: string
+      parallelism:
+        type: integer
+        default: 1
+      gke-version:
+        type: string
+        default: "1.18.15-gke.1501"
+      machine-type:
+        type: string
+        default: "n1-standard-8"
+      num-machines:
+        type: integer
+        default: 1
+      gpu-type:
+        type: string
+        default: "nvidia-tesla-k80"
+      gpus-per-machine:
+        type: integer
+        default: 1
+      region:
+        type: string
+        default: "us-west1"
+      node-locations:
+        type: string
+        default: "us-west1-b"
+      slack-mentions:
+        type: string
+        default: ""
+      slack-channel:
+        type: string
+        default: ""
+    docker:
+      - image: determinedai/cimg-base:stable
+    parallelism: <<parameters.parallelism>>
+    environment:
+      # Using the TF2-only image here is a hack to get more test coverage since TF1 is still the
+      # default system-wide. TF1 tests that fail in this configuration should be skipped when the
+      # "CUDA" environment variable is set to 11.
+      # TODO: (DET-4918): we should ensure a consistent way to have tests that can run against
+      # both major TensorFlow versions do so regularly (but not others).
+      TF1_GPU_IMAGE: determinedai/environments:cuda-11.0-pytorch-1.7-lightning-1.2-tf-2.4-gpu-0.13.0
+      TF2_GPU_IMAGE: determinedai/environments:cuda-11.0-pytorch-1.7-lightning-1.2-tf-2.4-gpu-0.13.0
+      CUDA: 11
+    steps:
+      - checkout
+      - set-slack-user-id
+      - setup-python-venv:
+          determined: true
+          extra-requirements-file: "e2e_tests/tests/requirements.txt"
+          executor: determinedai/cimg-base:stable
+      - setup-gke-cluster-cuda-11:
+          cluster-id: <<parameters.cluster-id-prefix>>-$(git rev-parse --short HEAD)-${CIRCLE_BUILD_NUM}-${CIRCLE_NODE_INDEX}
+          det-version: ${CIRCLE_SHA1}
+          gke-version: <<parameters.gke-version>>
+          machine-type: <<parameters.machine-type>>
+          num-machines: <<parameters.num-machines>>
+          gpu-type: <<parameters.gpu-type>>
+          gpus-per-machine: <<parameters.gpus-per-machine>>
+          region: <<parameters.region>>
+          node-locations: <<parameters.node-locations>>
+      - set-google-application-credentials
+      - run-e2e-tests:
+          mark: <<parameters.mark>>
+          master-host: ${MASTER_HOST}
+      - terminate-gke-cluster:
+          cluster-id: ${CLUSTER_ID}
+          region: <<parameters.region>>
+      - slack/status:
+          fail_only: True
+          only_for_branches: master
+          failure_message: ':thisisfine: A \`<<parameters.mark>>\` E2E GKE GPU job on branch \`${CIRCLE_BRANCH}\` has failed! Author Email: \`${AUTHOR_EMAIL}\`'
+          mentions: <<parameters.slack-mentions>>
+          channel: <<parameters.slack-channel>>
+
+  test-det-deploy:
+    parameters:
+      mark:
+        type: string
+      parallelism:
+        type: integer
+        default: 1
+      det-version:
+        type: string
+    machine:
+      image: ubuntu-2004:202101-01
+    resource_class: large
+    parallelism: <<parameters.parallelism>>
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - run: docker load --input build/master.image
+      - run: docker load --input build/agent.image
+
+      - setup-python-venv:
+          determined: true
+          extra-requirements-file: "e2e_tests/tests/requirements.txt"
+          executor: ubuntu-2004:202101-01
+
+      - pull-task-images:
+          tf1: True
+
+      - run-det-deploy-tests:
+          mark: <<parameters.mark>>
+          det-version: <<parameters.det-version>>
 
 workflows:
-  test-e2e:
+  lint:
     jobs:
       - build-proto
       - build-bindings:
           requires:
             - build-proto
+      - lint-docs
+      - lint-python
+      - lint-go
+      - lint-react:
+          requires:
+            - build-bindings
+      - lint-webui-tests
+
+  test-cli:
+    jobs:
+      - test-cli:
+          matrix:
+            parameters:
+              executor-name:
+                [
+                  "python-36",
+                  "python-37",
+                  "python-38",
+                  "win/default",
+                ]
+
+  test-unit:
+    jobs:
+      - test-unit-go
+      - build-proto
+      - build-bindings:
+          requires:
+            - build-proto
+      - test-unit-react:
+          requires:
+            - build-bindings
+      - test-unit-harness
+      - test-unit-harness-tf2
+      - test-unit-model-hub
+      - test-examples
+
+  test-intg:
+    jobs:
+      - test-intg-master
+      - test-intg-agent
+
+  test-e2e:
+    jobs:
+      - build-proto
+      - build-helm
+      - build-bindings:
+          requires:
+            - build-proto
+      - build-react-preview:
+          requires:
+            - build-bindings
       - build-react:
           dev-mode: true
           requires:
             - build-bindings
+      - build-storybook:
+          requires:
+            - build-bindings
+      - build-docs:
+          requires:
+            - build-helm
+            - build-proto
       - build-go
       - package-and-push-system-local:
           requires:
             - build-react
+            - build-docs
+
+      - package-and-push-system-dev:
+          requires:
+            - build-react
+            - build-docs
+          filters:
+            branches:
+              ignore:
+                - /pull\/.*/
+
+      - test-debian-packaging:
+          requires:
+            - package-and-push-system-local
+
+      - test-e2e:
+          name: test-e2e-tf2
+          requires:
+            - build-go
+          matrix:
+            parameters:
+              parallelism: [1]
+              tf2: [true]
+              mark: ["tensorflow2_cpu"]
+
+      - test-e2e:
+          name: test-e2e-tf1
+          requires:
+            - build-go
+          matrix:
+            parameters:
+              parallelism: [1]
+              tf1: [true]
+              mark: ["tensorflow1_cpu"]
+
+      - test-e2e:
+          name: test-e2e-cpu
+          requires:
+            - build-go
+          matrix:
+            parameters:
+              parallelism: [4]
+              tf1: [true]
+              mark: ["e2e_cpu"]
+
       - test-e2e-webui:
           requires:
             - build-bindings
             - package-and-push-system-local
+
+      - deploy:
+          enable-cors: true
+          context: aws
+          filters:
+            branches:
+              only:
+                - master
+          requires:
+            - package-and-push-system-dev
+          max-dynamic-agents: 2
+
+      - deploy:
+          name: deploy-release-party
+          context: aws
+          filters:
+            branches:
+              only:
+                - /release-.*/
+          requires:
+            - package-and-push-system-dev
+          matrix:
+            parameters:
+              gpu-agent-instance-type: ["p2.8xlarge"]
+              cpu-agent-instance-type: ["m5.large"]
+              max-dynamic-agents: [8]
+
+      - test-e2e-aws:
+          name: test-e2e-gpu-parallel
+          context: aws
+          filters:
+            branches:
+              only: master
+          requires:
+            - package-and-push-system-dev
+          matrix:
+            parameters:
+              parallelism: [2]
+              gpu-agent-instance-type: ["p2.8xlarge"]
+              cpu-agent-instance-type: ["m5.large"]
+              cluster-id-prefix: ["parallel"]
+              mark: ["parallel"]
+              slack-mentions: ["${SLACK_USER_ID}"]
+
+      - test-e2e-aws:
+          name: test-e2e-gpu-single
+          context: aws
+          filters:
+            branches:
+              only: master
+          requires:
+            - package-and-push-system-dev
+          matrix:
+            parameters:
+              parallelism: [2]
+              cluster-id-prefix: ["e2e-gpu"]
+              enable-tls: [true]
+              mark: ["e2e_gpu"]
+              slack-mentions: ["${SLACK_USER_ID}"]
+
+      - request-dev-deploy:
+          type: approval
+          filters: *upstream-feature-branch
+
+      - deploy:
+          context: aws
+          filters: *upstream-feature-branch
+          requires:
+            - request-dev-deploy
+            - package-and-push-system-dev
+
+      - request-gpu-tests:
+          type: approval
+          filters: *upstream-feature-branch
+
+      - test-e2e-aws:
+          name: test-e2e-gpu-parallel
+          context: aws
+          filters: *upstream-feature-branch
+          requires:
+            - request-gpu-tests
+            - package-and-push-system-dev
+          matrix:
+            parameters:
+              parallelism: [2]
+              gpu-agent-instance-type: ["p2.8xlarge"]
+              cpu-agent-instance-type: ["m5.large"]
+              cluster-id-prefix: ["parallel"]
+              mark: ["parallel"]
+              slack-mentions: ["${SLACK_USER_ID}"]
+
+      - test-e2e-aws:
+          name: test-e2e-gpu-single
+          context: aws
+          filters: *upstream-feature-branch
+          requires:
+            - request-gpu-tests
+            - package-and-push-system-dev
+          matrix:
+            parameters:
+              parallelism: [2]
+              cluster-id-prefix: ["e2e-gpu"]
+              enable-tls: [true]
+              mark: ["e2e_gpu"]
+              slack-mentions: ["${SLACK_USER_ID}"]
+
+      - request-model-hub-tests:
+          type: approval
+          filters: *upstream-feature-branch
+
+      - test-e2e-aws:
+          name: test-e2e-model-hub
+          context: aws
+          filters: *upstream-feature-branch
+          requires:
+            - request-model-hub-tests
+            - package-and-push-system-dev
+          matrix:
+            parameters:
+              gpu-agent-instance-type: ["p2.8xlarge"]
+              cpu-agent-instance-type: ["m5.large"]
+              cluster-id-prefix: ["model-hub"]
+              mark: ["model_hub"]
+              slack-mentions: ["${SLACK_USER_ID}"]
+              max-dynamic-agents: [2]
+
+      - test-e2e-gke:
+          name: test-e2e-gke-single-gpu
+          context: gcp
+          filters:
+            branches:
+              only: master
+          requires:
+            - package-and-push-system-dev
+          matrix:
+            parameters:
+              cluster-id-prefix: ["e2e-gpu"]
+              mark: ["e2e_gpu"]
+              parallelism: [1]
+              slack-mentions: ["${SLACK_USER_ID}"]
+
+      - test-e2e-gke:
+          name: test-e2e-gke-parallel
+          context: gcp
+          filters:
+            branches:
+              only: master
+          requires:
+            - package-and-push-system-dev
+          matrix:
+            parameters:
+              cluster-id-prefix: ["parallel"]
+              mark: ["parallel"]
+              parallelism: [1]
+              slack-mentions: ["${SLACK_USER_ID}"]
+              machine-type: ["n1-standard-32"]
+              gpus-per-machine: [4]
+              num-machines: [2]
+
+      - request-k8-tests:
+          type: approval
+          filters: *upstream-feature-branch
+
+      - request-k8-tests-cuda-11:
+          type: approval
+          filters: *upstream-feature-branch
+
+      - test-e2e-gke:
+          name: test-e2e-gke-single-gpu
+          context: gcp
+          filters: *upstream-feature-branch
+          requires:
+            - request-k8-tests
+            - package-and-push-system-dev
+          matrix:
+            parameters:
+              cluster-id-prefix: ["e2e-gpu"]
+              mark: ["e2e_gpu"]
+              parallelism: [1]
+              slack-mentions: ["${SLACK_USER_ID}"]
+
+      - test-e2e-gke:
+          name: test-e2e-gke-parallel
+          context: gcp
+          filters: *upstream-feature-branch
+          requires:
+            - request-k8-tests
+            - package-and-push-system-dev
+          matrix:
+            parameters:
+              cluster-id-prefix: ["parallel"]
+              mark: ["parallel"]
+              parallelism: [1]
+              slack-mentions: ["${SLACK_USER_ID}"]
+              machine-type: ["n1-standard-32"]
+              gpus-per-machine: [4]
+              num-machines: [2]
+
+      - test-e2e-gke-cuda-11:
+          name: test-e2e-gke-single-gpu-cuda-11
+          context: gcp
+          filters: *upstream-feature-branch
+          requires:
+            - request-k8-tests-cuda-11
+            - package-and-push-system-dev
+          matrix:
+            parameters:
+              cluster-id-prefix: ["e2e-gpu"]
+              mark: ["e2e_gpu"]
+              parallelism: [1]
+              slack-mentions: ["${SLACK_USER_ID}"]
+
+      - test-e2e-gke-cuda-11:
+          name: test-e2e-gke-parallel-cuda-11
+          context: gcp
+          filters: *upstream-feature-branch
+          requires:
+            - request-k8-tests-cuda-11
+            - package-and-push-system-dev
+          matrix:
+            parameters:
+              cluster-id-prefix: ["parallel"]
+              mark: ["parallel"]
+              parallelism: [1]
+              slack-mentions: ["${SLACK_USER_ID}"]
+              machine-type: ["n1-standard-32"]
+              gpus-per-machine: [4]
+              num-machines: [2]
+
+      - test-det-deploy:
+          name: test-det-deploy-local
+          requires:
+            - package-and-push-system-local
+          matrix:
+            parameters:
+              parallelism: [2]
+              mark: ["det_deploy_local"]
+              det-version: [$CIRCLE_SHA1]
+
+  nightly:
+    triggers:
+      - schedule:
+          cron: "0 5 * * *"
+          filters:
+            branches:
+              only:
+                - master
+    jobs:
+      - test-e2e-aws:
+          name: test-e2e-gpu-nightly
+          context: aws
+          matrix:
+            parameters:
+              parallelism: [2]
+              cluster-id-prefix: ["nightly"]
+              mark: ["nightly"]
+              slack-mentions: ["channel"]
+              slack-channel: ["ml-ag"]
+      - test-e2e-aws:
+          name: test-e2e-gpu-distributed
+          context: aws
+          matrix:
+            parameters:
+              cluster-id-prefix: ["distributed"]
+              mark: ["distributed"]
+              gpu-agent-instance-type: ["p2.8xlarge"]
+              cpu-agent-instance-type: ["m5.large"]
+              max-dynamic-agents: [2]
+              slack-mentions: ["channel"]
+              slack-channel: ["ml-ag"]
+      - test-e2e-aws:
+          name: test-e2e-gpu-model-hub
+          context: aws
+          matrix:
+            parameters:
+              cluster-id-prefix: ["model-hub"]
+              mark: ["model_hub"]
+              gpu-agent-instance-type: ["p2.8xlarge"]
+              cpu-agent-instance-type: ["m5.large"]
+              max-dynamic-agents: [2]
+              slack-mentions: ["channel"]
+              slack-channel: ["ml-ag"]
+
+  weekly-cuda-11:
+    triggers:
+      - schedule:
+          cron: "0 0 * * 1"
+          filters:
+            branches:
+              only:
+                - master
+    jobs:
+      - test-e2e-gke-cuda-11:
+          name: test-e2e-gke-single-gpu-cuda-11
+          context: gcp
+          matrix:
+            parameters:
+              cluster-id-prefix: ["e2e-gpu"]
+              mark: ["e2e_gpu"]
+              parallelism: [1]
+              slack-mentions: ["${SLACK_USER_ID}"]
+
+      - test-e2e-gke-cuda-11:
+          name: test-e2e-gke-parallel-cuda-11
+          context: gcp
+          matrix:
+            parameters:
+              cluster-id-prefix: ["parallel"]
+              mark: ["parallel"]
+              parallelism: [1]
+              slack-mentions: ["${SLACK_USER_ID}"]
+              machine-type: ["n1-standard-32"]
+              gpus-per-machine: [4]
+              num-machines: [2]
+
+  release:
+    jobs:
+      - build-helm:
+          filters: *release-and-rc-filters
+      - build-proto:
+          filters: *release-and-rc-filters
+      - build-bindings:
+          requires:
+            - build-proto
+          filters: *release-and-rc-filters
+      - build-react:
+          requires:
+            - build-bindings
+          context: determined-production
+          filters: *release-and-rc-filters
+      - build-docs:
+          context: determined-production
+          filters: *release-and-rc-filters
+          requires:
+            - build-helm
+            - build-proto
+
+      - publish-python-package:
+          matrix:
+            parameters:
+              path: ["harness", "common", "cli", "deploy", "model_hub"]
+          context: determined-production
+          filters: *release-and-rc-filters
+
+      - package-and-push-system-rc:
+          requires:
+            - build-react
+            - build-docs
+          context: determined-production
+          filters: *rc-filters
+
+      - package-and-push-system-release:
+          requires:
+            - build-react
+            - build-docs
+          context: determined-production
+          filters: *release-filters
+
+      - publish-docs:
+          requires:
+            - build-docs
+          context: determined-production
+          filters: *release-filters
+
+      - publish-helm:
+          requires:
+            - build-helm
+          context: determined-production
+          filters: *release-and-rc-filters
+
+      - upload-try-now-template:
+          context: determined-production
+          filters: *release-filters
