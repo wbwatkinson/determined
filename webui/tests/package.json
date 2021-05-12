@@ -6,7 +6,8 @@
     "test": "make dev-tests"
   },
   "dependencies": {
-    "gauge-ts": "0.1.0"
+    "gauge-ts": "0.1.0",
+    "js-sha512": "^0.8.0"
   },
   "devDependencies": {
     "@getgauge/cli": "^1.1.8",

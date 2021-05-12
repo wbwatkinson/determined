@@ -10,6 +10,7 @@ import {
 } from 'gauge-ts';
 /* eslint-enable no-unused-vars */
 
+import { sha512 } from 'js-sha512';
 import * as assert from 'assert';
 import * as expect from 'expect';
 import * as t from 'taiko';
@@ -74,9 +75,8 @@ const getElements = async (selector: string, hashSelector?: string): Promise<t.E
 
   for (const element of elements) {
     const hashElement = hashSelector ? await t.$(hashSelector, t.within(element)) : element;
-    const hashText = await hashElement.text();
-    const hashId = hashText.replace(/\s+/g, ' ').replace(/\r?\n|\r/g, '');
-
+    console.log('hmd: hashElement);
+    const hashId = sha512(await hashElement.text());
     if (!map[hashId]) {
       map[hashId] = true;
       dedupedElements.push(element);
