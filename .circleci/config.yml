@@ -1308,17 +1308,15 @@ jobs:
           mark: <<parameters.mark>>
           master-host: localhost
       
-      - run:
-        command: |
+      - run: |
           e=$(sudo docker ps -a | awk '{if(NR>1) print $NF}')
           for name in $e
-            do
-              ids=$(sudo docker ps -aqf "name=${name}")
-              echo $name | tee -a p.txt
-              echo $(docker logs ${ids}) | tee -a log.txt
-            done
-        when: on_fail
-        
+          do
+          ids=$(sudo docker ps -aqf "name=${name}")
+          echo $name | tee -a p.txt
+          echo $(docker logs ${ids}) | tee -a log.txt
+          done
+                  
       - store_artifacts:
           path: log.txt
 
